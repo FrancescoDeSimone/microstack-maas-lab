@@ -205,7 +205,7 @@ virt-install \
     --vcpus cores=2 \
     --cpu host-passthrough,cache.mode=passthrough \
     --memory 4096 \
-    --disk size=128,format=raw,target.rotation_rate=1,target.bus=scsi,cache=unsafe \
+    --disk size=600,format=raw,target.rotation_rate=1,target.bus=scsi,cache=unsafe \
     --network network=maas \
     --network network=public 
 
@@ -228,7 +228,7 @@ virt-install \
     --vcpus cores=2 \
     --cpu host-passthrough,cache.mode=passthrough \
     --memory 4096 \
-    --disk size=128,format=raw,target.rotation_rate=1,target.bus=scsi,cache=unsafe \
+    --disk size=600,format=raw,target.rotation_rate=1,target.bus=scsi,cache=unsafe \
     --network network=maas \
     --network network=public 
 
