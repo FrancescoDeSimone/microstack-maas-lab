@@ -276,10 +276,10 @@ for tag in ${TAGS[@]}; do
 done	
 
 for i in $(seq 1 "$num_machines"); do
+	system_id=$(maas admin nodes read | jq -r ".[] | select(.hostname == \"compute-$i\") | .system_id")
+	block_device_id=$(maas admin block-devices read $system_id | jq -r '.[] | select(.path == "/dev/disk/by-dname/sdb") | .id')
+	interface_id=$(maas admin interfaces read $system_id | jq -r '.[] | select(.name == "enp2s0") | .id')
 	for tag in ${TAGS[@]}; do 
-		system_id=$(maas admin nodes read | jq -r ".[] | select(.hostname == \"compute-$i\") | .system_id")
-		block_device_id=$(maas admin block-devices read $system_id | jq -r '.[] | select(.path == "/dev/disk/by-dname/sdb") | .id')
-		interface_id=$(maas admin interfaces read $system_id | jq -r '.[] | select(.name == "enp2s0") | .id')
 		maas admin block-device add-tag $system_id $block_device_id tag="ceph"
 		maas admin interface add-tag $system_id $interface_id tag="neutron:physnet1"
 		maas admin tag update-nodes $tag add=$system_id
@@ -304,8 +304,8 @@ for tag in ${TAGS[@]}; do
 	maas admin tags create name=$tag
 	set -eu
 done	
+system_id=$(maas admin  nodes read | jq -r '.[] | select(.hostname == "juju") | .system_id')
 for tag in ${TAGS[@]}; do 
-	system_id=$(maas admin  nodes read | jq -r '.[] | select(.hostname == "juju") | .system_id')
 	maas admin tag update-nodes $tag add=$system_id
 done	
 # SUNBEAM
@@ -328,8 +328,8 @@ for tag in ${TAGS[@]}; do
 	maas admin tags create name=$tag
 	set -eu
 done	
+system_id=$(maas admin  nodes read | jq -r '.[] | select(.hostname == "sunbeam") | .system_id')
 for tag in ${TAGS[@]}; do 
-	system_id=$(maas admin  nodes read | jq -r '.[] | select(.hostname == "sunbeam") | .system_id')
 	maas admin tag update-nodes $tag add=$system_id
 done	
 
