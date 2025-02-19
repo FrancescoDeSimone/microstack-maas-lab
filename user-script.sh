@@ -336,7 +336,7 @@ done
 
 sudo snap install openstack --channel 2024.1/edge
 sunbeam prepare-node-script --client | bash -x
-sunbeam deployment add maas mycloud $(sudo maas apikey --username=ubuntu)  http://10.0.9.10:5240/MAAS
+sunbeam deployment add maas mycloud $(sudo maas apikey --username=ubuntu)  http://10.0.9.11:5240/MAAS
 sunbeam deployment space map space-first
 validate_output=$(sunbeam deployment validate)
 # Check if the validation output contains 'FAIL'
