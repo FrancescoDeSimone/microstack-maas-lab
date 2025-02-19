@@ -92,7 +92,7 @@ EOF
 
 ## run
 
-Run the script to create the "quick-maas" LXD container to run MAAS and
+Run the script to create the "microstack" LXD container to run MAAS and
 MAAS Pod inside it. OpenStack, Kubernetes on top of OpenStack, and sample workload on top of Kubernetes will be deployed as a part of it.
 
 ```bash
@@ -118,6 +118,6 @@ Open sshuttle for web browser.
 ## how to destroy the environment and rebuild
 
 ```bash
-[baremetal] $ lxc delete --force quick-maas
+[baremetal] $ lxc delete --force microstack
 [baremetal] $ ./run.sh
 ```
