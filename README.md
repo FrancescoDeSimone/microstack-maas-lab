@@ -7,8 +7,8 @@ based on https://github.com/nobuto-m/quick-maas/
 Write `~/.ssh/config`.
 
 ```
-Host demo-maas
-    Hostname 10.0.9.10
+Host microstack-demo
+    Hostname 10.0.9.11
     User ubuntu
     ProxyJump demo-baremetal
     # IdentityFile /PATH/TO/YOUR/KEY
@@ -21,7 +21,7 @@ Host demo-baremetal
 
 Then, SSH to the instance and import keys.
 
-``` bash
+```bash
 [local] $ ssh demo-baremetal
 
 [baremetal] $ ssh-import-id "<Launchpad accounts>"
@@ -48,12 +48,11 @@ $ cat /sys/module/kvm_intel/parameters/nested
 -> Y
 ```
 
-
 ## prepare a LXD container to have a clean MAAS environment
 
-Setup LXD on the bare metal to have a clean MAAS environment to be
-confined in a container so you can reset the MAAS env without respawning
-the bare metal instance.
+Setup LXD on the bare metal to have a clean MAAS environment to be confined in a
+container so you can reset the MAAS env without respawning the bare metal
+instance.
 
 ```bash
 [baremetal] $ cat <<EOF | sudo lxd init --preseed
@@ -89,31 +88,29 @@ cluster: null
 EOF
 ```
 
-
 ## run
 
-Run the script to create the "microstack" LXD container to run MAAS and
-MAAS Pod inside it. OpenStack, Kubernetes on top of OpenStack, and sample workload on top of Kubernetes will be deployed as a part of it.
+Run the script to create the "microstack" LXD container to run MAAS and MAAS Pod
+inside it. OpenStack, Kubernetes on top of OpenStack, and sample workload on top
+of Kubernetes will be deployed as a part of it.
 
 ```bash
 [baremetal] $ ./run.sh
 ```
-
 
 ### how to access
 
 SSH.
 
 ```bash
-[local] $ ssh demo-maas
+[local] $ ssh microstack-demo
 ```
 
 Open sshuttle for web browser.
 
 ```bash
-[local] $ sshuttle -r demo-maas -N
+[local] $ sshuttle -r microstack-demo -N
 ```
-
 
 ## how to destroy the environment and rebuild
 
