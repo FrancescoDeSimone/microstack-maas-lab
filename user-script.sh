@@ -348,3 +348,99 @@ else
 fi
 sunbeam cluster bootstrap --accept-defaults
 sunbeam cluster deploy --accept-defaults
+
+# JOIN
+virt-install \
+    --import --noreboot \
+    --name "compute-2"\
+    --osinfo ubuntujammy \
+    --boot network,hd \
+    --vcpus cores=16 \
+    --cpu host-passthrough,cache.mode=passthrough \
+    --memory 16384 \
+    --disk size=600,format=raw,target.rotation_rate=1,target.bus=scsi,cache=unsafe \
+    --disk size=600,format=raw,target.rotation_rate=1,target.bus=scsi,cache=unsafe \
+    --network network=maas \
+    --network network=public
+
+maas admin machines create \
+    hostname="compute-2" \
+    architecture=amd64 \
+    mac_addresses="$(virsh dumpxml "compute-2" | xmllint --xpath 'string(//mac/@address)' -)" \
+    power_type=virsh \
+    power_parameters_power_address='qemu+ssh://root@127.0.0.1/system' \
+    power_parameters_power_id="compute-2"
+
+while true; do
+    status=$(maas admin machines read | jq -r ".[] | select(.hostname == \"compute-2\") | .status_name")
+    if [[ "$status" == "Ready" ]]; then
+        echo "Machine juju is ready!"
+        break
+    fi
+    echo "Waiting for machine juju to be commissioned (current status: $status)..."
+    sleep 15
+done
+
+TAGS=(
+      "openstack-mycloud"
+      "control"
+      "compute"
+      "storage"
+	)
+system_id=$(maas admin nodes read | jq -r ".[] | select(.hostname == \"compute-2\") | .system_id")
+block_device_id=$(maas admin block-devices read $system_id | jq -r '.[] | select(.path == "/dev/disk/by-dname/sdb") | .id')
+interface_id=$(maas admin interfaces read $system_id | jq -r '.[] | select(.name == "enp2s0") | .id')
+for tag in ${TAGS[@]}; do
+	maas admin block-device add-tag $system_id $block_device_id tag="ceph"
+	maas admin interface add-tag $system_id $interface_id tag="neutron:physnet1"
+	maas admin tag update-nodes $tag add=$system_id
+done
+sunbeam cluster deploy --accept-defaults
+
+## adding the third
+virt-install \
+    --import --noreboot \
+    --name "compute-3"\
+    --osinfo ubuntujammy \
+    --boot network,hd \
+    --vcpus cores=16 \
+    --cpu host-passthrough,cache.mode=passthrough \
+    --memory 16384 \
+    --disk size=600,format=raw,target.rotation_rate=1,target.bus=scsi,cache=unsafe \
+    --disk size=600,format=raw,target.rotation_rate=1,target.bus=scsi,cache=unsafe \
+    --network network=maas \
+    --network network=public
+
+maas admin machines create \
+    hostname="compute-3" \
+    architecture=amd64 \
+    mac_addresses="$(virsh dumpxml "compute-3" | xmllint --xpath 'string(//mac/@address)' -)" \
+    power_type=virsh \
+    power_parameters_power_address='qemu+ssh://root@127.0.0.1/system' \
+    power_parameters_power_id="compute-3"
+
+while true; do
+    status=$(maas admin machines read | jq -r ".[] | select(.hostname == \"compute-3\") | .status_name")
+    if [[ "$status" == "Ready" ]]; then
+        echo "Machine juju is ready!"
+        break
+    fi
+    echo "Waiting for machine juju to be commissioned (current status: $status)..."
+    sleep 15
+done
+
+TAGS=(
+      "openstack-mycloud"
+      "control"
+      "compute"
+      "storage"
+	)
+system_id=$(maas admin nodes read | jq -r ".[] | select(.hostname == \"compute-3\") | .system_id")
+block_device_id=$(maas admin block-devices read $system_id | jq -r '.[] | select(.path == "/dev/disk/by-dname/sdb") | .id')
+interface_id=$(maas admin interfaces read $system_id | jq -r '.[] | select(.name == "enp2s0") | .id')
+for tag in ${TAGS[@]}; do
+	maas admin block-device add-tag $system_id $block_device_id tag="ceph"
+	maas admin interface add-tag $system_id $interface_id tag="neutron:physnet1"
+	maas admin tag update-nodes $tag add=$system_id
+done
+sunbeam cluster deploy --accept-defaults
