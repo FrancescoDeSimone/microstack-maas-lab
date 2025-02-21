@@ -166,7 +166,7 @@ maas admin pods create \
 
 
 # compose machines
-num_machines=3
+num_machines=1
 for i in $(seq 1 "$num_machines"); do
     # TODO: --boot uefi
     # Starting vTPM manufacturing as swtpm:swtpm
@@ -261,30 +261,30 @@ while true; do
 	sleep 15
 done
 
-TAGS=( 
-      "openstack-mycloud" 
+TAGS=(
+      "openstack-mycloud"
       "control"
       "compute"
       "storage"
 	)
 
 
-for tag in ${TAGS[@]}; do 
+for tag in ${TAGS[@]}; do
 	set +eu
 	maas admin tags create name=$tag
 	set -eu
-done	
+done
 
 for i in $(seq 1 "$num_machines"); do
 	system_id=$(maas admin nodes read | jq -r ".[] | select(.hostname == \"compute-$i\") | .system_id")
 	block_device_id=$(maas admin block-devices read $system_id | jq -r '.[] | select(.path == "/dev/disk/by-dname/sdb") | .id')
 	interface_id=$(maas admin interfaces read $system_id | jq -r '.[] | select(.name == "enp2s0") | .id')
-	for tag in ${TAGS[@]}; do 
+	for tag in ${TAGS[@]}; do
 		maas admin block-device add-tag $system_id $block_device_id tag="ceph"
 		maas admin interface add-tag $system_id $interface_id tag="neutron:physnet1"
 		maas admin tag update-nodes $tag add=$system_id
-	done	
-done	
+	done
+done
 #JUJU
 while true; do
     status=$(maas admin machines read | jq -r ".[] | select(.hostname == \"juju\") | .status_name")
@@ -299,15 +299,15 @@ TAGS=(
 	"juju-controller"
 	"openstack-mycloud"
 	)
-for tag in ${TAGS[@]}; do 
+for tag in ${TAGS[@]}; do
 	set +eu
 	maas admin tags create name=$tag
 	set -eu
-done	
+done
 system_id=$(maas admin  nodes read | jq -r '.[] | select(.hostname == "juju") | .system_id')
-for tag in ${TAGS[@]}; do 
+for tag in ${TAGS[@]}; do
 	maas admin tag update-nodes $tag add=$system_id
-done	
+done
 # SUNBEAM
 while true; do
     status=$(maas admin machines read | jq -r ".[] | select(.hostname == \"sunbeam\") | .status_name")

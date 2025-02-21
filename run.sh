@@ -26,6 +26,15 @@ sleep 15
 
 lxc file push -p --uid 1000 --gid 1000 --mode 0600 ~/.ssh/authorized_keys microstack/home/ubuntu/.ssh/
 
+while true; do
+    status=$(lxc exec -t microstack -- cloud-init status | grep -oP '^status:\s+\K\w+')
+    if [[ "$status" != "running" ]]; then
+        notify-send "Microstack deployment" "Current status: $status"
+	exit
+    fi
+    sleep 15
+done &
+
 if which ts >/dev/null; then
     lxc exec -t microstack -- tail -f -n+1 /var/log/cloud-init-output.log | ts
 else
