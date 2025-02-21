@@ -76,14 +76,36 @@ virsh net-start maas
 
 cat <<EOF | virsh net-define /dev/stdin
 <network>
-  <name>public</name>
-  <bridge name='public' stp='off'/>
+  <name>external</name>
+  <bridge name='external' stp='off'/>
   <forward mode='nat'/>
   <ip address='192.168.171.1' netmask='255.255.255.0'/>
 </network>
 EOF
-virsh net-autostart public
-virsh net-start public
+virsh net-autostart external
+virsh net-start external
+
+cat <<EOF | virsh net-define /dev/stdin
+<network>
+  <name>ceph-storage</name>
+  <bridge name='ceph-storage' stp='off'/>
+  <forward mode='nat'/>
+  <ip address='192.168.191.1' netmask='255.255.255.0'/>
+</network>
+EOF
+virsh net-autostart ceph-storage
+virsh net-start ceph-storage
+
+cat <<EOF | virsh net-define /dev/stdin
+<network>
+  <name>storage-cluster</name>
+  <bridge name='storage-cluster' stp='off'/>
+  <forward mode='nat'/>
+  <ip address='192.168.201.1' netmask='255.255.255.0'/>
+</network>
+EOF
+virsh net-autostart storage-cluster
+virsh net-start storage-cluster
 
 # maas package install
 echo maas-region-controller maas/default-maas-url string 192.168.151.1 \
@@ -116,6 +138,14 @@ maas admin subnet update 192.168.171.0/24 \
     gateway_ip=192.168.171.1 \
     dns_servers=192.168.171.1
 
+maas admin subnet update 192.168.191.0/24 \
+    gateway_ip=192.168.191.1 \
+    dns_servers=192.168.191.1
+
+maas admin subnet update 192.168.201.0/24 \
+    gateway_ip=192.168.201.1 \
+    dns_servers=192.168.201.1
+
 fabric=$(maas admin subnets read | jq -r \
     '.[] | select(.cidr=="192.168.151.0/24").vlan.fabric')
 maas admin ipranges create type=reserved \
@@ -130,7 +160,24 @@ maas admin ipranges create type=reserved \
     start_ip=192.168.171.1 end_ip=192.168.171.100
 maas admin ipranges create type=dynamic \
     start_ip=192.168.171.201 end_ip=192.168.171.254
-maas admin vlan update "$fabric" 0 dhcp_on=true primary_rack="$HOSTNAME"
+maas admin vlan update "$fabric" 0 dhcp_on=false primary_rack="$HOSTNAME"
+
+
+fabric=$(maas admin subnets read | jq -r \
+    '.[] | select(.cidr=="192.168.191.0/24").vlan.fabric')
+maas admin ipranges create type=reserved \
+    start_ip=192.168.191.1 end_ip=192.168.191.100
+maas admin ipranges create type=dynamic \
+    start_ip=192.168.191.201 end_ip=192.168.191.254
+maas admin vlan update "$fabric" 0 dhcp_on=false primary_rack="$HOSTNAME"
+
+fabric=$(maas admin subnets read | jq -r \
+    '.[] | select(.cidr=="192.168.201.0/24").vlan.fabric')
+maas admin ipranges create type=reserved \
+    start_ip=192.168.201.1 end_ip=192.168.201.100
+maas admin ipranges create type=dynamic \
+    start_ip=192.168.201.201 end_ip=192.168.201.254
+maas admin vlan update "$fabric" 0 dhcp_on=false primary_rack="$HOSTNAME"
 
 maas admin spaces create name=space-first
 fabric_id=$(maas admin subnets read | jq -r '.[] | select(.cidr=="192.168.151.0/24").vlan.fabric_id')
@@ -141,8 +188,16 @@ maas admin spaces create name=space-second
 fabric_id=$(maas admin subnets read | jq -r '.[] | select(.cidr=="192.168.171.0/24").vlan.fabric_id')
 maas admin vlan update "$fabric_id" 0 space=space-second
 
+maas admin spaces create name=space-ceph
+fabric_id=$(maas admin subnets read | jq -r '.[] | select(.cidr=="192.168.191.0/24").vlan.fabric_id')
+maas admin vlan update "$fabric_id" 0 space=space-ceph
+
+maas admin spaces create name=space-storage
+fabric_id=$(maas admin subnets read | jq -r '.[] | select(.cidr=="192.168.201.0/24").vlan.fabric_id')
+maas admin vlan update "$fabric_id" 0 space=space-storage
+
 maas admin boot-source-selections create 1 os=ubuntu release=noble arches=amd64 subarches='*' labels='*'
-maas admin boot-resources import
+#maas admin boot-resources import
 
 # wait image
 time while [ "$(maas admin boot-resources is-importing)" = 'true' ]; do
@@ -184,7 +239,9 @@ for i in $(seq 1 "$num_machines"); do
         --disk size=600,format=raw,target.rotation_rate=1,target.bus=scsi,cache=unsafe \
         --disk size=600,format=raw,target.rotation_rate=1,target.bus=scsi,cache=unsafe \
         --network network=maas \
-        --network network=public 
+        --network network=ceph-storage\
+        --network network=external\
+        --network network=storage-cluster
 
     maas admin machines create \
         hostname="compute-$i" \
@@ -207,7 +264,9 @@ virt-install \
     --memory 4096 \
     --disk size=600,format=raw,target.rotation_rate=1,target.bus=scsi,cache=unsafe \
     --network network=maas \
-    --network network=public 
+    --network network=ceph-storage\
+    --network network=external\
+    --network network=storage-cluster
 
 maas admin machines create \
     hostname="juju" \
@@ -230,7 +289,9 @@ virt-install \
     --memory 4096 \
     --disk size=600,format=raw,target.rotation_rate=1,target.bus=scsi,cache=unsafe \
     --network network=maas \
-    --network network=public 
+    --network network=ceph-storage\
+    --network network=external\
+    --network network=storage-cluster
 
 maas admin machines create \
     hostname="sunbeam" \
@@ -241,13 +302,20 @@ maas admin machines create \
     power_parameters_power_id="sunbeam"
 
 maas admin ipranges create type=reserved \
-    start_ip="192.168.151.101" end_ip=192.168.151.105 \
+    start_ip="192.168.151.101" end_ip="192.168.151.105" \
     comment='mycloud-internal-api'
 
 maas admin ipranges create type=reserved \
-    start_ip="192.168.151.106" end_ip=192.168.151.115 \
+    start_ip="192.168.151.106" end_ip="192.168.151.115" \
     comment='mycloud-public-api'
 
+maas admin ipranges create type=reserved \
+    start_ip="192.168.191.116" end_ip="192.168.191.125" \
+    comment='mycloud-storage-api'
+
+maas admin ipranges create type=reserved \
+    start_ip="192.168.191.126" end_ip="192.168.191.135" \
+    comment='mycloud-storage-cluster-api'
 
 #TAGS
 ## COMPUTE
@@ -319,25 +387,27 @@ while true; do
     sleep 15
 done
 TAGS=(
-	"openstack-mycloud" 
+	"openstack-mycloud"
 	"sunbeam"
 	)
 
-for tag in ${TAGS[@]}; do 
+for tag in ${TAGS[@]}; do
 	set +eu
 	maas admin tags create name=$tag
 	set -eu
-done	
+done
 system_id=$(maas admin  nodes read | jq -r '.[] | select(.hostname == "sunbeam") | .system_id')
-for tag in ${TAGS[@]}; do 
+for tag in ${TAGS[@]}; do
 	maas admin tag update-nodes $tag add=$system_id
-done	
+done
 
 
 sudo snap install openstack --channel 2024.1/edge
 sunbeam prepare-node-script --client | bash -x
 sunbeam deployment add maas mycloud $(sudo maas apikey --username=ubuntu)  http://10.0.9.11:5240/MAAS
 sunbeam deployment space map space-first
+sunbeam deployment space map space-ceph:storage
+sunbeam deployment space map space-storage:storage-cluster
 validate_output=$(sunbeam deployment validate)
 # Check if the validation output contains 'FAIL'
 if echo "$validate_output" | grep -q "FAIL"; then
