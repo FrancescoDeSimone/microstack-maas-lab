@@ -184,7 +184,7 @@ for i in $(seq 1 "$num_machines"); do
         --disk size=600,format=raw,target.rotation_rate=1,target.bus=scsi,cache=unsafe \
         --disk size=600,format=raw,target.rotation_rate=1,target.bus=scsi,cache=unsafe \
         --network network=maas \
-        --network network=public 
+        --network network=public
 
     maas admin machines create \
         hostname="compute-$i" \
@@ -207,7 +207,7 @@ virt-install \
     --memory 4096 \
     --disk size=600,format=raw,target.rotation_rate=1,target.bus=scsi,cache=unsafe \
     --network network=maas \
-    --network network=public 
+    --network network=public
 
 maas admin machines create \
     hostname="juju" \
@@ -230,7 +230,7 @@ virt-install \
     --memory 4096 \
     --disk size=600,format=raw,target.rotation_rate=1,target.bus=scsi,cache=unsafe \
     --network network=maas \
-    --network network=public 
+    --network network=public
 
 maas admin machines create \
     hostname="sunbeam" \
@@ -319,19 +319,19 @@ while true; do
     sleep 15
 done
 TAGS=(
-	"openstack-mycloud" 
+	"openstack-mycloud"
 	"sunbeam"
 	)
 
-for tag in ${TAGS[@]}; do 
+for tag in ${TAGS[@]}; do
 	set +eu
 	maas admin tags create name=$tag
 	set -eu
-done	
+done
 system_id=$(maas admin  nodes read | jq -r '.[] | select(.hostname == "sunbeam") | .system_id')
-for tag in ${TAGS[@]}; do 
+for tag in ${TAGS[@]}; do
 	maas admin tag update-nodes $tag add=$system_id
-done	
+done
 
 
 sudo snap install openstack --channel 2024.1/edge
@@ -347,4 +347,10 @@ else
     echo "Validation passed. Continuing..."
 fi
 sunbeam cluster bootstrap --accept-defaults
-sunbeam cluster deploy --accept-defaults
+sunbeam cluster deploy --accept-defaults # --database single
+
+#for addon in caas instance-recovery vault images-sync telemetry resource-optimization orchestration loadbalancer ldap;
+#do
+#	sunbeam enable $addon
+#done
+#sunbeam configure caas
