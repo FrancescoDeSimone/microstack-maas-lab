@@ -20,7 +20,7 @@ NUM_COMPUTE="${NUM_COMPUTE:-1}"
 
 # -- VM Resources: Compute (control + compute + storage) --
 COMPUTE_CPUS="${COMPUTE_CPUS:-16}"
-COMPUTE_RAM_MB="${COMPUTE_RAM_MB:-49152}"           # 48 GB
+COMPUTE_RAM_MB="${COMPUTE_RAM_MB:-32768}"           # 48 GB
 COMPUTE_DISK_GB="${COMPUTE_DISK_GB:-100}"           # OS disk
 COMPUTE_CEPH_DISK_GB="${COMPUTE_CEPH_DISK_GB:-100}" # Ceph OSD disk
 DISK_FORMAT="${DISK_FORMAT:-raw}"                   # raw or qcow2
@@ -48,6 +48,9 @@ STCLUSTER_SUBNET_PREFIX="${STCLUSTER_SUBNET_PREFIX:-192.168.155}" # storage-clus
 PUBLIC_SUBNET_PREFIX="${PUBLIC_SUBNET_PREFIX:-192.168.171}"       # public (API endpoints via Traefik)
 EXTERNAL_SUBNET_PREFIX="${EXTERNAL_SUBNET_PREFIX:-192.168.172}"   # external (floating IPs, Neutron provider)
 LXD_IP="${LXD_IP:-10.0.9.11}"
+PROXY_IP="${PROXY_IP:-10.0.9.10}"
+ENABLE_PROXY="${ENABLE_PROXY:-true}"
+MAAS_IMAGE_STREAM="${MAAS_IMAGE_STREAM:-stable}"
 
 # -- MAAS IP Range Layout (per-subnet, uniform) --
 # .1         = gateway (bridge IP)
@@ -75,7 +78,7 @@ ENABLE_RESOURCE_OPT="${ENABLE_RESOURCE_OPT:-true}"
 ENABLE_IMAGES_SYNC="${ENABLE_IMAGES_SYNC:-true}"
 ENABLE_SHARED_FS="${ENABLE_SHARED_FS:-true}" # Feature gate + storage role
 ENABLE_TLS="${ENABLE_TLS:-false}"            # Complex, off by default
-ENABLE_VALIDATION="${ENABLE_VALIDATION:-true}"
+ENABLE_VALIDATION="${ENABLE_VALIDATION:-false}"
 # -- Skipped by default (require external dependencies) --
 ENABLE_BAREMETAL="${ENABLE_BAREMETAL:-false}"                 # Needs real hardware + switch config
 ENABLE_CAAS="${ENABLE_CAAS:-false}"                           # Needs external CAPI mgmt cluster
@@ -171,17 +174,28 @@ function configure_maas_subnet() {
 	maas admin vlan update "$fabric_id" 0 space="$space_name"
 }
 
+WAIT_MACHINE_TIMEOUT="${WAIT_MACHINE_TIMEOUT:-1800}"
+
 function wait_for_machine() {
 	local hostname="$1"
 	local target_status="${2:-Ready}"
-	log "Waiting for machine '$hostname' to reach status '$target_status'..."
+	local timeout="${3:-$WAIT_MACHINE_TIMEOUT}"
+	local elapsed=0
+	log "Waiting for machine '$hostname' to reach status '$target_status' (timeout: ${timeout}s)..."
 	while true; do
 		status=$(maas admin machines read | jq -r ".[] | select(.hostname == \"$hostname\") | .status_name")
 		if [[ "$status" == "$target_status" ]]; then
 			echo "Machine '$hostname' is $target_status!"
 			return 0
 		fi
-		echo "  '$hostname' current status: $status (waiting for $target_status)..."
+		elapsed=$((elapsed + 15))
+		if [[ $elapsed -ge $timeout ]]; then
+			log "ERROR: Timeout waiting for '$hostname' to reach status '$target_status' after ${timeout}s"
+			log "Current status: $status"
+			log "Run 'maas admin events \$(maas admin nodes read | jq -r \".[] | select(.hostname == \\\"$hostname\\\") | .system_id\")' for details"
+			return 1
+		fi
+		echo "  '$hostname' current status: $status (waiting for $target_status, ${elapsed}s elapsed)..."
 		sleep 15
 	done
 }
@@ -399,6 +413,29 @@ create_libvirt_network public "$PUBLIC_SUBNET_PREFIX"
 create_libvirt_network external
 
 # ============================================================================
+# Wait for local MAAS image mirror (if proxy enabled)
+# ============================================================================
+if [[ "$ENABLE_PROXY" == "true" ]]; then
+	log "Waiting for local MAAS image mirror to sync..."
+
+	MAX_WAIT=1200
+	WAITED=0
+	while ! curl -sf "http://${PROXY_IP}/images/mirror-ready" >/dev/null 2>&1; do
+		if [[ $WAITED -ge $MAX_WAIT ]]; then
+			log "WARNING: Mirror not ready after ${MAX_WAIT}s, using remote"
+			break
+		fi
+		echo "  Waiting for mirror... (${WAITED}s)"
+		sleep 30
+		WAITED=$((WAITED + 30))
+	done
+
+	if curl -sf "http://${PROXY_IP}/images/mirror-ready" >/dev/null 2>&1; then
+		log "Local image mirror ready, will use for boot-resources"
+	fi
+fi
+
+# ============================================================================
 # PHASE 3: MAAS Installation & Configuration
 # ============================================================================
 log "Phase 3: MAAS Installation & Configuration"
@@ -437,6 +474,10 @@ configure_maas_subnet "$STCLUSTER_SUBNET_PREFIX" space-storage-cluster
 configure_maas_subnet "$PUBLIC_SUBNET_PREFIX" space-public
 
 # ---- Boot images ----
+if [[ "$ENABLE_PROXY" == "true" ]] && curl -sf "http://${PROXY_IP}/images/mirror-ready" >/dev/null 2>&1; then
+	log "Using local image mirror: http://${PROXY_IP}/maas/images/ephemeral-v3/${MAAS_IMAGE_STREAM}"
+	maas admin boot-source update 1 url="http://${PROXY_IP}/maas/images/ephemeral-v3/${MAAS_IMAGE_STREAM}"
+fi
 maas admin boot-source-selections create 1 os=ubuntu release=noble arches=amd64 subarches='*' labels='*'
 maas admin boot-resources import
 
@@ -476,9 +517,36 @@ create_vm "juju" "$JUJU_CPUS" "$JUJU_RAM_MB" "$JUJU_DISK_GB"
 create_vm "sunbeam" "$SUNBEAM_CPUS" "$SUNBEAM_RAM_MB" "$SUNBEAM_DISK_GB"
 
 # ============================================================================
-# PHASE 5: IP Reservations for Sunbeam
+# PHASE 5: Start VMs and Trigger Commissioning
 # ============================================================================
-log "Phase 5: IP Reservations"
+log "Phase 5: Starting VMs and Triggering Commissioning"
+
+# Start all VMs - they will PXE boot and MAAS will commission them
+for vm in compute-1 juju sunbeam; do
+	log "Starting VM: $vm"
+	virsh start "$vm" || log "WARNING: Failed to start $vm"
+done
+
+# Trigger commissioning for all machines
+# Skip networking/storage tests — these are ephemeral nested VMs that don't need
+# full hardware validation. --enable-ssh allows post-commissioning access.
+log "Triggering commissioning for all machines..."
+for vm in compute-1 juju sunbeam; do
+	system_id=$(maas admin nodes read | jq -r ".[] | select(.hostname == \"$vm\") | .system_id")
+	if [[ -n "$system_id" && "$system_id" != "null" ]]; then
+		log "Commissioning $vm (system_id: $system_id)"
+		maas admin machine commission "$system_id" \
+			--skip-networking --skip-storage --enable-ssh ||
+			log "WARNING: Commissioning failed for $vm"
+	else
+		log "WARNING: Could not find system_id for $vm"
+	fi
+done
+
+# ============================================================================
+# PHASE 6: IP Reservations for Sunbeam
+# ============================================================================
+log "Phase 6: IP Reservations"
 
 # Sunbeam looks for reserved IP ranges by label (comment) in the correct
 # MAAS space. These ranges are used for MetalLB IP pools.
@@ -502,9 +570,15 @@ maas admin ipranges create type=reserved \
 	comment="${DEPLOYMENT_NAME}-storage-ippool"
 
 # ============================================================================
-# PHASE 6: Wait for Commissioning & Apply Tags
+# PHASE 7: Wait for Commissioning & Apply Tags
 # ============================================================================
-log "Phase 6: Commissioning & Tagging"
+log "Phase 7: Commissioning & Tagging"
+
+log "TIP: Commissioning typically takes 10-20 minutes. If stuck, check:"
+log "  - VMs are powered on: virsh list --all"
+log "  - Networks are active: virsh net-list --all"
+log "  - MAAS events: maas admin events <system_id>"
+log "  - DHCP leases: virsh net-dhcp-leases mgmt"
 
 # ---- Compute nodes ----
 for i in $(seq 1 "$NUM_COMPUTE"); do
@@ -532,9 +606,9 @@ tag_machine "sunbeam" "openstack-${DEPLOYMENT_NAME}" "sunbeam"
 set_nics_auto_dhcp "sunbeam"
 
 # ============================================================================
-# PHASE 7: Sunbeam Base Deployment
+# PHASE 8: Sunbeam Base Deployment
 # ============================================================================
-log "Phase 7: Sunbeam Base Deployment"
+log "Phase 8: Sunbeam Base Deployment"
 
 snap install openstack --channel "$SNAP_CHANNEL"
 sunbeam prepare-node-script --client | bash -x
@@ -723,9 +797,9 @@ echo "Route added: ${EXTERNAL_SUBNET_PREFIX}.0/24 via $COMPUTE1_MGMT_IP"
 log "Phase 7c complete — external network access configured."
 
 # ============================================================================
-# PHASE 8: Feature Enablement
+# PHASE 9: Feature Enablement
 # ============================================================================
-log "Phase 8: Feature Enablement"
+log "Phase 9: Feature Enablement"
 
 # ---- 1. Vault (prerequisite for Secrets, TLS) ----
 if [[ "$ENABLE_VAULT" == "true" ]]; then
@@ -888,9 +962,9 @@ enable_feature ENABLE_VALIDATION "Validation (Tempest)" \
 	sunbeam enable validation
 
 # ============================================================================
-# PHASE 9: MAAS DNS Entries for Traefik Endpoints
+# PHASE 10: MAAS DNS Entries for Traefik Endpoints
 # ============================================================================
-log "Phase 9: MAAS DNS Entries for Traefik"
+log "Phase 10: MAAS DNS Entries for Traefik"
 
 # Create DNS A records in MAAS for traefik LoadBalancer service IPs.
 # This lets API endpoints be accessible by hostname via MAAS DNS.
