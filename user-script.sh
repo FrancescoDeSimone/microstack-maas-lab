@@ -149,9 +149,10 @@ function configure_maas_subnet() {
 	local space_name="$2"
 	local cidr="${prefix}.0/24"
 
+	# Use real DNS servers (Google DNS) instead of bridge IPs which don't provide DNS
 	maas admin subnet update "$cidr" \
 		gateway_ip="${prefix}.1" \
-		dns_servers="${MGMT_SUBNET_PREFIX}.1"
+		dns_servers="8.8.8.8 8.8.4.4"
 
 	local fabric
 	fabric=$(maas admin subnets read | jq -r \
@@ -797,6 +798,46 @@ echo "Route added: ${EXTERNAL_SUBNET_PREFIX}.0/24 via $COMPUTE1_MGMT_IP"
 log "Phase 7c complete — external network access configured."
 
 # ============================================================================
+# PHASE 7d: External Network Post-Configuration (DHCP, DNS, NAT)
+# ============================================================================
+log "Phase 7d: External network post-configuration"
+
+# --- Enable DHCP on external-subnet ---
+# VMs need DHCP to receive their IP configuration from Neutron.
+# Provider networks have DHCP disabled by default.
+eval "$(sunbeam openrc)"
+openstack subnet set external-subnet --dhcp
+echo "DHCP enabled on external-subnet."
+
+# --- Configure DNS servers for VMs ---
+# VMs need DNS resolvers to access internet services by hostname.
+# Uses Google Public DNS (8.8.8.8, 8.8.4.4) for reliability.
+openstack subnet set external-subnet \
+	--dns-nameserver 8.8.8.8 \
+	--dns-nameserver 8.8.4.4
+echo "DNS servers (8.8.8.8, 8.8.4.4) configured on external-subnet."
+
+# --- Configure NAT for VM internet access ---
+# VMs on external provider network need MASQUERADE to access internet.
+# Without NAT, return traffic cannot reach private 192.168.172.0/24 IPs.
+ssh $SSH_OPTS ubuntu@"$COMPUTE1_MGMT_IP" \
+	"sudo iptables -t nat -A POSTROUTING \
+		-s ${EXTERNAL_SUBNET_PREFIX}.0/24 \
+		-o enp1s0 \
+		-j MASQUERADE"
+echo "NAT/MASQUERADE configured for ${EXTERNAL_SUBNET_PREFIX}.0/24 on compute-1."
+
+# --- Make iptables rules persistent ---
+# Install iptables-persistent to save rules across reboots.
+# Uses non-interactive mode to avoid prompts during deployment.
+ssh $SSH_OPTS ubuntu@"$COMPUTE1_MGMT_IP" \
+	"sudo DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent && \
+	 sudo netfilter-persistent save"
+echo "iptables rules saved persistently."
+
+log "Phase 7d complete — External network fully configured with DHCP, DNS, and NAT."
+
+# ============================================================================
 # PHASE 9: Feature Enablement
 # ============================================================================
 log "Phase 9: Feature Enablement"
@@ -960,6 +1001,46 @@ fi
 # ---- 17. Validation / Tempest (run last to validate all features) ----
 enable_feature ENABLE_VALIDATION "Validation (Tempest)" \
 	sunbeam enable validation
+
+# ============================================================================
+# PHASE 9b: Enable Ceph Dashboard (Optional Observability)
+# ============================================================================
+log "Phase 9b: Enable Ceph Dashboard"
+
+# Enable and configure Ceph dashboard for storage monitoring.
+# Configured for HTTP (port 8080) for simplicity in lab environments.
+ssh $SSH_OPTS ubuntu@"$COMPUTE1_MGMT_IP" "
+	# Enable dashboard manager module
+	sudo microceph.ceph mgr module enable dashboard
+	
+	# Configure for HTTP access (disable SSL for lab simplicity)
+	sudo microceph.ceph config set mgr mgr/dashboard/ssl false
+	sudo microceph.ceph config set mgr mgr/dashboard/server_addr 0.0.0.0
+	sudo microceph.ceph config set mgr mgr/dashboard/server_port 8080
+	
+	# Restart dashboard module to apply config
+	sudo microceph.ceph mgr module disable dashboard
+	sudo microceph.ceph mgr module enable dashboard
+	
+	# Create admin user (password: admin123)
+	echo 'admin123' | sudo microceph.ceph dashboard ac-user-create \
+		admin administrator -i - 2>/dev/null || true
+"
+
+# Retrieve dashboard URL
+CEPH_DASH_URL=$(ssh $SSH_OPTS ubuntu@"$COMPUTE1_MGMT_IP" \
+	"sudo microceph.ceph mgr services 2>/dev/null" | jq -r '.dashboard // empty')
+
+if [[ -n "$CEPH_DASH_URL" ]]; then
+	echo ""
+	echo "Ceph Dashboard enabled:"
+	echo "  URL:      $CEPH_DASH_URL"
+	echo "  Username: admin"
+	echo "  Password: admin123"
+	echo ""
+fi
+
+log "Phase 9b complete — Ceph dashboard enabled."
 
 # ============================================================================
 # PHASE 10: MAAS DNS Entries for Traefik Endpoints
