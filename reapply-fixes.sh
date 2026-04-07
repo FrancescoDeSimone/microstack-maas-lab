@@ -101,5 +101,14 @@ echo ">>> Fix 4b: External network route on container..."
 ip route add "${EXTERNAL_SUBNET_PREFIX}.0/24" via "$COMPUTE1_MGMT_IP" 2>/dev/null || true
 echo "  Done."
 
+# ============================================================================
+# Fix 4c: NAT/MASQUERADE for VM internet access
+# ============================================================================
+echo ">>> Fix 4c: NAT/MASQUERADE for VM internet access..."
+ssh $SSH_OPTS ubuntu@"$COMPUTE1_MGMT_IP" \
+	"sudo iptables -t nat -C POSTROUTING -s ${EXTERNAL_SUBNET_PREFIX}.0/24 -o enp1s0 -j MASQUERADE 2>/dev/null || \
+	 sudo iptables -t nat -A POSTROUTING -s ${EXTERNAL_SUBNET_PREFIX}.0/24 -o enp1s0 -j MASQUERADE"
+echo "  Done."
+
 echo ""
 echo ">>> All fixes re-applied successfully."
