@@ -817,6 +817,12 @@ openstack subnet set external-subnet \
 	--dns-nameserver 8.8.4.4
 echo "DNS servers (8.8.8.8, 8.8.4.4) configured on external-subnet."
 
+# --- Configure gateway IP for external subnet ---
+# Gateway must match br-ex IP on compute-1 (192.168.172.2).
+# Default gateway is .1 but br-ex is configured with .2 in reapply-fixes.sh.
+openstack subnet set external-subnet --gateway ${EXTERNAL_SUBNET_PREFIX}.2
+echo "Gateway IP set to ${EXTERNAL_SUBNET_PREFIX}.2 (br-ex on compute-1)."
+
 # --- Configure NAT for VM internet access ---
 # VMs on external provider network need MASQUERADE to access internet.
 # Without NAT, return traffic cannot reach private 192.168.172.0/24 IPs.
