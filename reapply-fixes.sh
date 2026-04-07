@@ -33,7 +33,7 @@ echo "  compute-1 IP: $COMPUTE1_MGMT_IP"
 
 # ============================================================================
 # Fix 2: Pod-to-Ceph routing rule on compute-1
-# ============================================================================
+# ===========================================================================
 echo ">>> Fix 2: Pod-to-Ceph routing rule on compute-1..."
 ssh $SSH_OPTS ubuntu@"$COMPUTE1_MGMT_IP" \
 	"sudo ip rule add to 10.1.0.0/24 lookup main prio 100 2>/dev/null || true"
@@ -96,7 +96,7 @@ echo "  Done."
 
 # ============================================================================
 # Fix 4b: External network route on container
-# ============================================================================
+# ============================================================================4
 echo ">>> Fix 4b: External network route on container..."
 ip route add "${EXTERNAL_SUBNET_PREFIX}.0/24" via "$COMPUTE1_MGMT_IP" 2>/dev/null || true
 echo "  Done."
